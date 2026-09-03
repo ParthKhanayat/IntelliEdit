@@ -2,8 +2,9 @@ import tree_sitter_c as tsc
 from tree_sitter import Language, Parser
 
 # Initialize C parser
-C_LANGUAGE = Language(tsc.language())
-parser = Parser(C_LANGUAGE)
+C_LANGUAGE = Language(tsc.language(), "c")
+parser = Parser()
+parser.set_language(C_LANGUAGE)
 
 def parse_code(code: str):
     tree = parser.parse(bytes(code, "utf8"))
@@ -26,8 +27,8 @@ def get_completions(code: str, line: int, column: int):
 def traverse_tree(node):
     result = {
         "type": node.type,
-        "start_point": [node.start_point.row, node.start_point.column],
-        "end_point": [node.end_point.row, node.end_point.column],
+        "start_point": [node.start_point[0], node.start_point[1]],
+        "end_point": [node.end_point[0], node.end_point[1]],
         "children": []
     }
     for child in node.children:
@@ -37,3 +38,18 @@ def traverse_tree(node):
 def parse_code_to_json(code: str):
     tree = parse_code(code)
     return traverse_tree(tree.root_node)
+
+def get_lexical_tokens(code: str):
+    tree = parse_code(code)
+    tokens = []
+    
+    def walk(node):
+        if len(node.children) == 0:
+            if node.type != "comment": # Usually we might skip comments in lexical phase, but keeping simple
+                text = code.encode("utf8")[node.start_byte:node.end_byte].decode("utf8")
+                tokens.append({"type": node.type, "value": text})
+        for child in node.children:
+            walk(child)
+            
+    walk(tree.root_node)
+    return tokens

@@ -1,6 +1,6 @@
 fastapi==0.109.2
 uvicorn==0.27.1
-pydantic==2.6.1
+pydantic>=2.9.0
 tree-sitter==0.21.3
 tree-sitter-c==0.21.0
 google-generativeai==0.3.2
