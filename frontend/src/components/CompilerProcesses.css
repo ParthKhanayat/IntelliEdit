@@ -1,0 +1,139 @@
+.compiler-processes-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.processes-header {
+  margin-bottom: 1rem;
+}
+
+.processes-header h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.processes-header .subtitle {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.phases-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.phase-card {
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  border-radius: 8px;
+  background-color: var(--bg-tertiary);
+}
+
+.phase-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  color: var(--accent-primary);
+}
+
+.phase-header h3 {
+  font-size: 1rem;
+  font-weight: 500;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.phase-body {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  background: rgba(0,0,0,0.2);
+  border-radius: 6px;
+  padding: 0.75rem;
+  overflow-x: auto;
+}
+
+/* Specific Phase Styling */
+
+.token-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.token {
+  padding: 0.25rem 0.5rem;
+  background-color: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #a5b4fc;
+}
+
+.token-identifier {
+  color: #93c5fd;
+  border-color: rgba(147, 197, 253, 0.3);
+  background-color: rgba(147, 197, 253, 0.1);
+}
+
+.token-string_literal {
+  color: #86efac;
+  border-color: rgba(134, 239, 172, 0.3);
+  background-color: rgba(134, 239, 172, 0.1);
+}
+
+.token-number_literal {
+  color: #fca5a5;
+  border-color: rgba(252, 165, 165, 0.3);
+  background-color: rgba(252, 165, 165, 0.1);
+}
+
+.code-block {
+  margin: 0;
+  font-family: 'Fira Code', 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #e2e8f0;
+}
+
+.code-block.json {
+  color: #cbd5e1;
+}
+
+.code-block.assembly {
+  color: #f87171;
+}
+
+.semantic-list, .optimization-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.semantic-list li, .optimization-list li {
+  color: #cbd5e1;
+}
+
+/* States */
+.loading-state, .error-state, .empty-state {
+  padding: 2rem;
+  text-align: center;
+  border-radius: 8px;
+  color: var(--text-secondary);
+}
+
+.error-state {
+  color: #ef4444;
+}
