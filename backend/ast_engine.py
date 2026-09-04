@@ -2,9 +2,19 @@ import tree_sitter_c as tsc
 from tree_sitter import Language, Parser
 
 # Initialize C parser
-C_LANGUAGE = Language(tsc.language(), "c")
-parser = Parser()
-parser.set_language(C_LANGUAGE)
+try:
+    C_LANGUAGE = Language(tsc.language())
+except TypeError:
+    C_LANGUAGE = Language(tsc.language(), "c")
+
+try:
+    parser = Parser(C_LANGUAGE)
+except TypeError:
+    parser = Parser()
+    if hasattr(parser, "set_language"):
+        parser.set_language(C_LANGUAGE)
+    else:
+        parser.language = C_LANGUAGE
 
 def parse_code(code: str):
     tree = parser.parse(bytes(code, "utf8"))
