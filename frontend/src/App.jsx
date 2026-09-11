@@ -7,6 +7,7 @@ import { Code2, Wand2, Network } from 'lucide-react';
 import './App.css';
 
 function App() {
+  //setCode used to dynamically update this variable when user is typing
   const [code, setCode] = useState('#include <stdio.h>\n\nint main() {\n    printf("Hello IntelliEdit!\\n");\n    return 0;\n}');
   const [activeTab, setActiveTab] = useState('suggestions');
   

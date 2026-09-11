@@ -1,12 +1,12 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi import FastAPI     #used to create API
+from fastapi.middleware.cors import CORSMiddleware #used to safely communicate( Security feature) CORS:Cross-Origin Resource Sharing
+from pydantic import BaseModel #data validation and parsing
 import ast_engine
 import ai_engine
 
 app = FastAPI(title="IntelliEdit Backend")
 
-app.add_middleware(
+app.add_middleware( #permision
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -14,15 +14,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class CodeRequest(BaseModel):
+class CodeRequest(BaseModel): #defining type for code and cursor position
     code: str
     cursor_line: int = 0
     cursor_column: int = 0
-
+#API Endpoints
 @app.post("/api/autocomplete")
-async def autocomplete(request: CodeRequest):
+async def autocomplete(request: CodeRequest): #request comes from front end
     suggestions = ast_engine.get_completions(request.code, request.cursor_line, request.cursor_column)
-    return {"suggestions": suggestions}
+    return {"suggestions": suggestions} #returns the suggesttions
 
 @app.post("/api/optimize")
 async def optimize(request: CodeRequest):
@@ -49,6 +49,6 @@ async def compiler_processes(request: CodeRequest):
         "target_code": phases_data["target_code"]
     }
 
-if __name__ == "__main__":
+if __name__ == "__main__": #starter for python web server
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
