@@ -27,4 +27,3 @@ An AST-Driven Text Editor with Predictive Autocomplete and AI-Assisted Code Opti
 - **Modern UI**: Glassmorphism design and dark mode.
 - **Predictive Autocomplete**: Customized Monaco Editor completions connected to backend.
 - **AI Optimization**: Right-side panel that debounces code changes and suggests best practices based on the backend API.
-end
