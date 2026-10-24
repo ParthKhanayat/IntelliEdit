@@ -15,28 +15,20 @@ import ai_engine
 MODEL_PATH = "code_optimizer_model.pkl"
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(
-        f"Could not find '{MODEL_PATH}'. Please place the .pkl file downloaded from Google Colab into the backend/ folder."
+        f"Could not find '{MODEL_PATH}'. Please place the .pkl file into the backend/ folder."
     )
 
 ml_model = joblib.load(MODEL_PATH)
 cfg_analyzer = BasicBlockCFGAnalyzer()
 
-def normalize_c_code(code: str) -> str:
-    """
-    Normalizes standard C syntax into clean assignment statements 
-    so the optimizer can process them.
-    """
-    lines = code.split('\n')
-    normalized = []
-    for line in lines:
-        l = line.strip()
-        # Strip C data types like 'int ', 'float ', 'double ' from declarations
-        l = re.sub(r'^\s*(int|float|double|char|long)\s+', '', l)
-        # Convert C print statements or trailing semicolons if needed
-        l = l.rstrip(';')
-        if l:
-            normalized.append(l)
-    return "\n".join(normalized)
+# Regex pattern matching optional C type declarations while preserving indentation
+C_ASSIGN_PATTERN = re.compile(
+    r'^(\s*(?:[a-zA-Z_]\w*\s*:\s*)?(?:(?:int|float|double|long|short|char|unsigned)\s+)?)'
+    r'([a-zA-Z_]\w*)'
+    r'(\s*:?=\s*)'
+    r'(.+?)'
+    r'(;?\s*)$'
+)
 
 class CompilerOptimizer:
     def __init__(self, model):
@@ -45,16 +37,48 @@ class CompilerOptimizer:
     def pass_constant_folding_and_propagation(self, lines: List[str], logs: List[str]) -> List[str]:
         constants: Dict[str, Any] = {}
         new_lines = []
+
+        # Pre-scan to find variables modified inside loops or via +=, ++, --
+        full_code = "\n".join(lines)
+        loop_modified_vars = set(re.findall(r'\b([a-zA-Z_]\w*)\s*(?:\+\+|\-\-|[\+\-\*\/]=)', full_code))
+
+        in_loop = False
         for line in lines:
-            lhs_match = re.match(r'^(\s*[a-zA-Z_]\w*\s*:?=\s*)(.+?)(;?\s*)$', line)
-            if lhs_match and not line.strip().startswith("if"):
-                prefix, rhs, suffix = lhs_match.groups()
-                lhs_var = re.sub(r'[:=\s]', '', prefix)
-                for const_var, const_val in constants.items():
+            stripped = line.strip()
+
+            # Track loop entry and kill any constants modified inside the loop
+            if re.match(r'^(for|while)\b', stripped):
+                in_loop = True
+                for v in list(constants.keys()):
+                    if re.search(rf'\b{v}\b\s*(?:=|\+=|\-=|\*=|\+\+|\-\-)', full_code):
+                        del constants[v]
+                new_lines.append(line)
+                continue
+
+            # If a line uses +=, -=, *=, /=, ++, or --, kill that variable's constant status
+            m_compound = re.match(r'^\s*([a-zA-Z_]\w*)\s*(?:[\+\-\*\/]=|\+\+|\-\-)', stripped)
+            if m_compound:
+                var_mod = m_compound.group(1)
+                if var_mod in constants:
+                    del constants[var_mod]
+                new_lines.append(line)
+                continue
+
+            lhs_match = C_ASSIGN_PATTERN.match(line)
+            if lhs_match and not stripped.startswith(("if", "for", "while", "return", "printf")):
+                prefix, lhs_var, op, rhs, suffix = lhs_match.groups()
+
+                # Do not propagate a variable into its own re-assignment inside a loop (e.g., sum = sum + 8)
+                for const_var, const_val in list(constants.items()):
+                    if const_var == lhs_var and in_loop:
+                        continue
+                    if const_var in loop_modified_vars and in_loop:
+                        continue
                     if re.search(rf'\b{const_var}\b', rhs):
                         rhs = re.sub(rf'\b{const_var}\b', str(const_val), rhs)
                         logs.append(f"[Constant Propagation] Replaced '{const_var}' with {const_val}")
 
+                # Evaluate pure numeric expressions (Constant Folding)
                 def eval_math(match):
                     expr = match.group(0)
                     try:
@@ -70,11 +94,14 @@ class CompilerOptimizer:
                     eval_math,
                     rhs
                 )
-                if re.match(r'^\d+(?:\.\d+)?$', rhs.strip()):
+
+                # Record constant only if not inside a loop and not modified by loop
+                if re.match(r'^\d+(?:\.\d+)?$', rhs.strip()) and not in_loop and lhs_var not in loop_modified_vars:
                     constants[lhs_var] = float(rhs.strip()) if '.' in rhs else int(rhs.strip())
                 elif lhs_var in constants:
                     del constants[lhs_var]
-                new_lines.append(f"{prefix}{rhs}{suffix}")
+
+                new_lines.append(f"{prefix}{lhs_var}{op}{rhs}{suffix}")
             else:
                 new_lines.append(line)
         return new_lines
@@ -83,18 +110,22 @@ class CompilerOptimizer:
         new_lines = []
         for line in lines:
             orig = line
+            # Eliminate self-identity statement `x = x + 0;` or `x = x * 1;`
             if re.match(r'^\s*([a-zA-Z_]\w*)\s*:?=\s*\1\s*(\+\s*0|\*\s*1)\s*;?\s*$', line):
                 logs.append(f"[Algebraic Simplification] Eliminated identity '{line.strip()}'")
                 continue
+
             line = re.sub(r'\b([a-zA-Z_]\w*)\s*\+\s*0\b', r'\1', line)
+            line = re.sub(r'\b0\s*\+\s*([a-zA-Z_]\w*)\b', r'\1', line)
             line = re.sub(r'\b([a-zA-Z_]\w*)\s*\*\s*1\b', r'\1', line)
-            line = re.sub(r'\b1\s*\*\s*([a-zA-Z_]\w*)', r'\1', line)
+            line = re.sub(r'\b1\s*\*\s*([a-zA-Z_]\w*)\b', r'\1', line)
             line = re.sub(r'\b([a-zA-Z_]\w*)\s*\^\s*2\b', r'\1 * \1', line)
             line = re.sub(r'\b2\s*\*\s*([a-zA-Z_]\w*)\b', r'\1 + \1', line)
             line = re.sub(r'\b([a-zA-Z_]\w*)\s*\*\s*2\b', r'\1 << 1', line)
             line = re.sub(r'\b([a-zA-Z_]\w*)\s*\*\s*4\b', r'\1 << 2', line)
             line = re.sub(r'\b([a-zA-Z_]\w*)\s*\*\s*8\b', r'\1 << 3', line)
             line = re.sub(r'\b([a-zA-Z_]\w*)\s*\/\s*2\b', r'\1 >> 1', line)
+
             if line != orig:
                 logs.append(f"[Strength Reduction / Algebraic] '{orig.strip()}' -> '{line.strip()}'")
             new_lines.append(line)
@@ -105,15 +136,19 @@ class CompilerOptimizer:
         copies: Dict[str, str] = {}
         new_lines = []
         for line in lines:
-            lbl_match = re.match(r'^(\s*[a-zA-Z_]\w*\s*:\s*)(.+)$', line)
-            lbl_prefix = lbl_match.group(1) if lbl_match else ""
-            stmt_body = lbl_match.group(2) if lbl_match else line
+            stripped = line.strip()
+            if stripped.startswith(("if", "for", "while", "return", "printf", "}")):
+                if stripped.startswith(("for", "while")):
+                    available_exprs.clear()
+                    copies.clear()
+                new_lines.append(line)
+                continue
 
-            assign_match = re.match(r'^(\s*)([a-zA-Z_]\w*)(\s*:?=\s*)(.+?)(;?\s*)$', stmt_body)
-            if assign_match and not stmt_body.strip().startswith("if"):
-                indent, lhs, op, rhs, suffix = assign_match.groups()
+            assign_match = C_ASSIGN_PATTERN.match(line)
+            if assign_match:
+                prefix, lhs, op, rhs, suffix = assign_match.groups()
                 for k, v in copies.items():
-                    if re.search(rf'\b{k}\b', rhs):
+                    if k != lhs and re.search(rf'\b{k}\b', rhs):
                         rhs = re.sub(rf'\b{k}\b', v, rhs)
                         logs.append(f"[Copy Propagation] Replaced '{k}' with '{v}' in '{lhs}'")
 
@@ -130,7 +165,7 @@ class CompilerOptimizer:
                 elif re.search(r'[\+\-\*\/<<>>]', rhs) and not re.search(rf'\b{lhs}\b', rhs):
                     available_exprs[rhs] = lhs
 
-                new_lines.append(f"{lbl_prefix}{indent}{lhs}{op}{rhs}{suffix}")
+                new_lines.append(f"{prefix}{lhs}{op}{rhs}{suffix}")
             else:
                 new_lines.append(line)
         return new_lines
@@ -144,9 +179,10 @@ class CompilerOptimizer:
                 if '}' in line:
                     skip_block = False
                 continue
-            m_assign = re.match(r'^\s*([a-zA-Z_]\w*)\s*:?=\s*(\d+)\s*;?\s*$', line)
-            if m_assign:
-                known_vals[m_assign.group(1)] = m_assign.group(2)
+            m_assign = C_ASSIGN_PATTERN.match(line)
+            if m_assign and re.match(r'^\d+$', m_assign.group(4).strip()):
+                known_vals[m_assign.group(2)] = m_assign.group(4).strip()
+
             m_if = re.match(r'^\s*if\s*\(\s*([a-zA-Z_]\w*)\s*==\s*(\d+)\s*\)', line)
             if m_if:
                 var, val = m_if.groups()
@@ -159,29 +195,51 @@ class CompilerOptimizer:
 
     def pass_loop_optimization(self, lines: List[str], logs: List[str]) -> List[str]:
         code = "\n".join(lines)
-        pattern_while = re.compile(r'while\s*\(\s*([a-zA-Z_]\w*)\s*(<=|<|>=|>)\s*([a-zA-Z_]\w*\s*[\+\-]\s*\d+)\s*\)')
+
+        # 1. Code Motion in while condition: while(i <= max - 1)
+        pattern_while = re.compile(r'(\s*)while\s*\(\s*([a-zA-Z_]\w*)\s*(<=\vert{}<\vert{}>=\vert{}>)\s*([a-zA-Z_]\w*\s*[\+\-]\s*\d+)\s*\)')
         m_while = pattern_while.search(code)
         if m_while:
-            idx_var, cond_op, inv_expr = m_while.groups()
-            code = pattern_while.sub(f"N = {inv_expr};\nwhile({idx_var} {cond_op} N)", code)
+            indent, idx_var, cond_op, inv_expr = m_while.groups()
+            code = pattern_while.sub(f"{indent}int N = {inv_expr};\n{indent}while ({idx_var} {cond_op} N)", code)
             logs.append(f"[Loop Code Motion] Hoisted invariant '{inv_expr}' outside loop")
 
+        # 2. Induction Variable Strength Reduction in for loops: count = i * 7
         pattern_for = re.compile(
-            r'for\s*\(\s*([a-zA-Z_]\w*)\s*=\s*1\s*;\s*\1\s*<=\s*(\d+)\s*;\s*(?:\+\+\1|\1\+\+)\s*\)\s*\{\s*([a-zA-Z_]\w*)\s*=\s*\1\s*\*\s*(\d+)\s*;\s*\}',
+            r'(\s*)for\s*\(\s*(?:int\s+)?([a-zA-Z_]\w*)\s*=\s*1\s*;\s*\2\s*<=\s*(\d+)\s*;\s*(?:\+\+\2\vert{}\2\+\+)\s*\)\s*\{\s*(?:int\s+)?([a-zA-Z_]\w*)\s*=\s*\2\s*\*\s*(\d+)\s*;\s*\}',
             re.DOTALL
         )
         m_for = pattern_for.search(code)
         if m_for:
-            idx, bound, target_var, factor = m_for.groups()
+            indent, idx, bound, target_var, factor = m_for.groups()
             replacement = (
-                f"temp = {factor};\n"
-                f"for({idx}=1; {idx}<={bound}; {idx}++) {{\n"
-                f"    {target_var} = temp;\n"
-                f"    temp = temp + {factor};\n"
-                f"}}"
+                f"{indent}int temp = {factor};\n"
+                f"{indent}for (int {idx} = 1; {idx} <= {bound}; {idx}++) {{\n"
+                f"{indent}    int {target_var} = temp;\n"
+                f"{indent}    temp = temp + {factor};\n"
+                f"{indent}}}"
             )
             code = pattern_for.sub(replacement, code)
             logs.append(f"[Induction Variable Elimination] Converted '{target_var} = {idx} * {factor}' to addition")
+
+        # 3. Hoist loop-invariant assignments out of for/while loop bodies (Slide 12)
+        loop_body_pattern = re.compile(
+            r'(\s*)((?:for|while)\s*\([^\)]+\)\s*\{\n)'
+            r'((?:.*\n)*?)'
+            r'(\s+)((?:int\s+)?[a-zA-Z_]\w*\s*=\s*[a-zA-Z0-9_]+\s*[\+\-\*\/]\s*[a-zA-Z0-9_]+\s*;)\n',
+            re.MULTILINE
+        )
+        m_inv = loop_body_pattern.search(code)
+        if m_inv:
+            indent, loop_header, before_stmts, body_indent, inv_stmt = m_inv.groups()
+            if not re.search(r'\b(i|j|sum|count)\b', inv_stmt):
+                code = loop_body_pattern.sub(
+                    f"{indent}{inv_stmt}\n{indent}{loop_header}{before_stmts}",
+                    code,
+                    count=1
+                )
+                logs.append(f"[Loop Code Motion] Hoisted loop-invariant statement '{inv_stmt.strip()}' outside loop")
+
         return code.split('\n')
 
     def pass_peephole_optimization(self, lines: List[str], logs: List[str]) -> List[str]:
@@ -205,14 +263,15 @@ class CompilerOptimizer:
                     i += 2
                     continue
 
-            m_inc = re.match(r'^(\s*)([a-zA-Z_]\w*)\s*:?=\s*\2\s*\+\s*1\s*;?\s*$', line)
+            # Only convert i = i + 1 to INCR i if it is TAC/Assembly (no trailing C semicolon)
+            m_inc = re.match(r'^(\s*)([a-zA-Z_]\w*)\s*:?=\s*\2\s*\+\s*1\s*$', line)
             if m_inc:
                 logs.append(f"[Peephole: Machine Idiom] '{line.strip()}' -> 'INCR {m_inc.group(2)}'")
                 new_lines.append(f"{m_inc.group(1)}INCR {m_inc.group(2)}")
                 i += 1
                 continue
 
-            m_dec = re.match(r'^(\s*)([a-zA-Z_]\w*)\s*:?=\s*\2\s*\-\s*1\s*;?\s*$', line)
+            m_dec = re.match(r'^(\s*)([a-zA-Z_]\w*)\s*:?=\s*\2\s*\-\s*1\s*$', line)
             if m_dec:
                 logs.append(f"[Peephole: Machine Idiom] '{line.strip()}' -> 'DECR {m_dec.group(2)}'")
                 new_lines.append(f"{m_dec.group(1)}DECR {m_dec.group(2)}")
@@ -224,19 +283,27 @@ class CompilerOptimizer:
         return new_lines
 
     def optimize(self, code: str) -> Dict[str, Any]:
-        code = normalize_c_code(code)
+        # 1. Extract 10 features and ask the Random Forest ML model which passes to run
         features = np.array([extract_code_features(code)])
         preds = self.ml_model.predict(features)[0]
         predicted_passes = [OPTIMIZATION_LABELS[i] for i, val in enumerate(preds) if val == 1]
 
         lines = code.split('\n')
         logs: List[str] = []
-        lines = self.pass_loop_optimization(lines, logs)
-        lines = self.pass_dead_and_unreachable_code(lines, logs)
-        lines = self.pass_constant_folding_and_propagation(lines, logs)
-        lines = self.pass_algebraic_and_strength_reduction(lines, logs)
-        lines = self.pass_cse_and_copy_propagation(lines, logs)
-        lines = self.pass_peephole_optimization(lines, logs)
+
+        # 2. ML-GATED EXECUTION: Only run passes that the ML Model predicted (preds[i] == 1)
+        if preds[4] == 1:
+            lines = self.pass_loop_optimization(lines, logs)
+        if preds[3] == 1:
+            lines = self.pass_dead_and_unreachable_code(lines, logs)
+        if preds[0] == 1:
+            lines = self.pass_constant_folding_and_propagation(lines, logs)
+        if preds[1] == 1 or features[0][1] > 0 or features[0][2] > 0:
+            lines = self.pass_algebraic_and_strength_reduction(lines, logs)
+        if preds[2] == 1:
+            lines = self.pass_cse_and_copy_propagation(lines, logs)
+        if preds[5] == 1:
+            lines = self.pass_peephole_optimization(lines, logs)
 
         return {
             "ml_predicted_passes": predicted_passes,
@@ -245,7 +312,7 @@ class CompilerOptimizer:
             "cfg_analysis": cfg_analyzer.analyze(code)
         }
 
-app = FastAPI(title="IntelliEdit & ML Code Optimizer API")
+app = FastAPI(title="BCSE307L ML Code Optimizer API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 optimizer = CompilerOptimizer(ml_model)
 
@@ -264,27 +331,49 @@ async def optimize_endpoint(req: CodeRequest):
     return result
 
 @app.post("/api/autocomplete")
-async def autocomplete(req: CodeRequest):
-    suggestions = ast_engine.get_completions(req.code, req.cursor_line, req.cursor_column)
+async def autocomplete_endpoint(request: CodeRequest):
+    suggestions = ast_engine.get_completions(request.code, request.cursor_line, request.cursor_column)
     return {"suggestions": suggestions}
 
 @app.post("/api/ast")
-async def get_ast(req: CodeRequest):
-    tree_data = ast_engine.parse_code_to_json(req.code)
+async def get_ast_endpoint(request: CodeRequest):
+    tree_data = ast_engine.parse_code_to_json(request.code)
     return {"ast": tree_data}
 
 @app.post("/api/compiler-processes")
-async def compiler_processes(req: CodeRequest):
-    tokens = ast_engine.get_lexical_tokens(req.code)
-    ast_tree = ast_engine.parse_code_to_json(req.code)
-    phases_data = await ai_engine.get_compiler_phases(req.code)
+async def compiler_processes_endpoint(request: CodeRequest):
+    tokens = ast_engine.get_lexical_tokens(request.code)
+    ast_tree = ast_engine.parse_code_to_json(request.code)
+    phases_data = await ai_engine.get_compiler_phases(request.code)
+    
     return {
         "lexical_analysis": tokens,
         "syntax_analysis": ast_tree,
-        "semantic_analysis": phases_data["semantic_analysis"],
-        "intermediate_code": phases_data["intermediate_code"],
-        "code_optimization": phases_data["code_optimization"],
-        "target_code": phases_data["target_code"]
+        "semantic_analysis": phases_data.get("semantic_analysis", []),
+        "intermediate_code": phases_data.get("intermediate_code", ""),
+        "code_optimization": phases_data.get("code_optimization", []),
+        "target_code": phases_data.get("target_code", "")
+    }
+
+class InlineHintRequest(BaseModel):
+    code: str
+
+@app.post("/api/inline-hint")
+def inline_hint_endpoint(req: InlineHintRequest):
+    features = np.array([extract_code_features(req.code)])
+    preds = ml_model.predict(features)[0]
+    predicted_passes = [OPTIMIZATION_LABELS[i] for i, val in enumerate(preds) if val == 1]
+    
+    suggestion = None
+    if preds[1] == 1 or features[0][1] > 0 or features[0][2] > 0:
+        if "* 8" in req.code:
+            suggestion = re.sub(r'\*\s*8', '<< 3', req.code)
+        elif "+ 0" in req.code:
+            suggestion = re.sub(r'\+\s*0', '', req.code)
+
+    return {
+        "predicted_passes": predicted_passes,
+        "suggestion": suggestion
     }
 
 if __name__ == "__main__":

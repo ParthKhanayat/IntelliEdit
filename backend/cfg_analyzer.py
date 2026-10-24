@@ -3,13 +3,127 @@ from typing import List, Dict, Set, Tuple, Any
 
 class BasicBlockCFGAnalyzer:
     """
-    Implements Module 5 Part 1:
-    1. Partition into Basic Blocks using Leader Rules (Slide 37)
-    2. Construct Flow Graph edges (Slide 40)
-    3. Compute Global Data Flow Analysis: gen[B], kill[B], in[B], out[B] (Slides 24-35)
+    Upgraded Analyzer:
+    1. Automatically lowers high-level C (for, while, if, +=, ++) into Three-Address Code (TAC)
+       matching Module 5 Part 1 Slides 42-46.
+    2. Partitions into Basic Blocks using Leader Rules (Slide 37).
+    3. Constructs Flow Graph edges (Slide 40) & Reaching Definitions (gen/kill/in/out).
     """
+
+    def _lower_c_to_tac(self, raw_code: str) -> List[str]:
+        """
+        If the input is high-level C code (contains for/while/main/#include),
+        automatically translates it into Three-Address Code (TAC) with explicit labels and gotos.
+        If the input is already TAC, leaves it untouched.
+        """
+        # If code already has explicit 'goto', treat it as Three-Address Code directly
+        if re.search(r'\bgoto\b', raw_code, re.IGNORECASE):
+            return [l.strip() for l in raw_code.split('\n') if l.strip() and not l.strip().startswith('//')]
+
+        tac_lines: List[str] = []
+        block_stack: List[Tuple[str, str, str]] = [] # (type, start_label, exit_label, step_stmt)
+        loop_id = 1
+        if_id = 1
+
+        for raw_line in raw_code.split('\n'):
+            line = raw_line.strip()
+            if not line or line.startswith('//') or line.startswith('#include'):
+                continue
+
+            # Skip function signature headers like 'int main() {'
+            if re.match(r'^(?:int|void|float|double|char)?\s*main\s*\([^)]*\)\s*\{?$', line):
+                continue
+            if line == '{':
+                continue
+
+            # Handle closing brace '}' for loops/conditionals
+            if line == '}':
+                if block_stack:
+                    b_type, start_lbl, exit_lbl, step_stmt = block_stack.pop()
+                    if b_type == 'for':
+                        if step_stmt:
+                            tac_lines.append(step_stmt)
+                        tac_lines.append(f"goto {start_lbl}")
+                        tac_lines.append(f"{exit_lbl}:")
+                    elif b_type == 'while':
+                        tac_lines.append(f"goto {start_lbl}")
+                        tac_lines.append(f"{exit_lbl}:")
+                    elif b_type == 'if':
+                        tac_lines.append(f"{exit_lbl}:")
+                continue
+
+            # 1. Convert C `for (init; cond; step) {` -> TAC (Matches Slide 46)
+            m_for = re.match(r'^for\s*\(\s*([^;]+);\s*([^;]+);\s*([^\)]+)\)\s*\{?$', line)
+            if m_for:
+                init_s, cond_s, step_s = [s.strip() for s in m_for.groups()]
+                # Clean C types like 'int i = 0' -> 'i = 0'
+                init_s = re.sub(r'^(?:int|float|double|long|char)\s+', '', init_s)
+                # Normalize step 'i++' or '++i' -> 'i = i + 1'
+                step_s = re.sub(r'^([a-zA-Z_]\w*)\+\+$\vert{}^\+\+([a-zA-Z_]\w*)$', lambda m: f"{m.group(1) or m.group(2)} = {m.group(1) or m.group(2)} + 1", step_s)
+                step_s = re.sub(r'^([a-zA-Z_]\w*)\-\-$\vert{}^\-\-([a-zA-Z_]\w*)$', lambda m: f"{m.group(1) or m.group(2)} = {m.group(1) or m.group(2)} - 1", step_s)
+
+                loop_lbl = f"LOOP_FOR_{loop_id}"
+                body_lbl = f"L_BODY_{loop_id}"
+                exit_lbl = f"L_EXIT_{loop_id}"
+                loop_id += 1
+
+                tac_lines.append(init_s)
+                tac_lines.append(f"{loop_lbl}: if {cond_s} goto {body_lbl}")
+                tac_lines.append(f"goto {exit_lbl}")
+                tac_lines.append(f"{body_lbl}:")
+                block_stack.append(('for', loop_lbl, exit_lbl, step_s))
+                continue
+
+            # 2. Convert C `while (cond) {` -> TAC (Matches Slide 42 & 44)
+            m_while = re.match(r'^while\s*\(\s*([^\)]+)\)\s*\{?$', line)
+            if m_while:
+                cond_s = m_while.group(1).strip()
+                loop_lbl = f"LOOP_WHILE_{loop_id}"
+                body_lbl = f"L_BODY_{loop_id}"
+                exit_lbl = f"L_EXIT_{loop_id}"
+                loop_id += 1
+
+                tac_lines.append(f"{loop_lbl}: if {cond_s} goto {body_lbl}")
+                tac_lines.append(f"goto {exit_lbl}")
+                tac_lines.append(f"{body_lbl}:")
+                block_stack.append(('while', loop_lbl, exit_lbl, ""))
+                continue
+
+            # 3. Convert C `if (cond) {` -> TAC
+            m_if = re.match(r'^if\s*\(\s*([^\)]+)\)\s*\{?$', line)
+            if m_if and 'goto' not in line:
+                cond_s = m_if.group(1).strip()
+                true_lbl = f"L_TRUE_{if_id}"
+                exit_lbl = f"L_ENDIF_{if_id}"
+                if_id += 1
+
+                tac_lines.append(f"if {cond_s} goto {true_lbl}")
+                tac_lines.append(f"goto {exit_lbl}")
+                tac_lines.append(f"{true_lbl}:")
+                block_stack.append(('if', true_lbl, exit_lbl, ""))
+                continue
+
+            # 4. Clean regular C statements (strip types, semicolons, expand +=, ++)
+            stmt = line.rstrip(';').strip()
+            stmt = re.sub(r'^(?:int|float|double|long|char)\s+', '', stmt)
+
+            # Expand compound assignments: `sum += i` -> `sum = sum + i`
+            m_comp = re.match(r'^([a-zA-Z_]\w*)\s*([\+\-\*\/])=\s*(.+)$', stmt)
+            if m_comp:
+                v, op, rhs = m_comp.groups()
+                stmt = f"{v} = {v} {op} {rhs}"
+
+            # Expand `i++` or `i--`
+            stmt = re.sub(r'^([a-zA-Z_]\w*)\+\+$\vert{}^\+\+([a-zA-Z_]\w*)$', lambda m: f"{m.group(1) or m.group(2)} = {m.group(1) or m.group(2)} + 1", stmt)
+            stmt = re.sub(r'^([a-zA-Z_]\w*)\-\-$\vert{}^\-\-([a-zA-Z_]\w*)$', lambda m: f"{m.group(1) or m.group(2)} = {m.group(1) or m.group(2)} - 1", stmt)
+
+            if stmt:
+                tac_lines.append(stmt)
+
+        return tac_lines
+
     def analyze(self, code: str) -> Dict[str, Any]:
-        raw_lines = [l.strip() for l in code.split('\n') if l.strip() and not l.strip().startswith('//')]
+        raw_lines = self._lower_c_to_tac(code)
         if not raw_lines:
             return {"blocks": [], "edges": [], "mermaid_cfg": "graph TD;"}
 
@@ -41,7 +155,7 @@ class BasicBlockCFGAnalyzer:
         if n == 0:
             return {"blocks": [], "edges": [], "mermaid_cfg": "graph TD;"}
 
-        # STEP 1: Determine Leaders
+        # STEP 1: Determine Leaders (Slide 37)
         leaders: Set[int] = {0}
         for i, stmt in enumerate(statements):
             m_goto = re.search(r'\bgoto\s+\(?([a-zA-Z0-9_]+)\)?', stmt, re.IGNORECASE)
@@ -99,14 +213,14 @@ class BasicBlockCFGAnalyzer:
                     edges.append({
                         "from": b_id,
                         "to": target_block,
-                        "label": "true/jump" if is_conditional else "jump"
+                        "label": "true" if is_conditional else "jump"
                     })
 
             if not is_unconditional_goto and b_idx + 1 < len(blocks):
                 edges.append({
                     "from": b_id,
                     "to": blocks[b_idx + 1]["id"],
-                    "label": "fallthrough"
+                    "label": "false" if is_conditional else "fallthrough"
                 })
 
         # STEP 4: Reaching Definitions Data Flow (gen, kill, in, out)
