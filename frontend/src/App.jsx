@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import mermaid from 'mermaid';
-import { Sparkles, Cpu, FileCode, Zap, Layers, Activity, GitCompare, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Cpu, FileCode, Zap, Layers, Activity, GitCompare, CheckCircle2, RefreshCw } from 'lucide-react';
 
 import CodeEditor from './components/CodeEditor';
-import SuggestionsPanel from './components/SuggestionsPanel';
 import CompilerProcesses from './components/CompilerProcesses';
 import './App.css';
 
@@ -77,7 +76,6 @@ export default function App() {
 
   // IntelliEdit C IDE State (Original 30% Milestone)
   const [ideCode, setIdeCode] = useState(DEFAULT_C_CODE);
-  const [ideTab, setIdeTab] = useState('compiler'); // 'suggestions' or 'compiler'
   const [selectedPreset, setSelectedPreset] = useState('slide_cfg');
 
   function handleEditorMount(editor) {
@@ -175,7 +173,6 @@ export default function App() {
             <Zap size={20} color="#3b82f6" />
             <span>IntelliEdit</span>
           </div>
-          <span className="nav-badge">BCSE307L Compiler Design</span>
         </div>
 
         {/* Mode Switcher Tabs */}
@@ -187,17 +184,15 @@ export default function App() {
           >
             <GitCompare size={16} />
             <span>ML Optimizer & CFG</span>
-            <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.2)' }}>Update</span>
           </button>
           
           <button 
             className={`mode-btn ${activeMode === 'ide' ? 'active' : ''}`}
             onClick={() => setActiveMode('ide')}
-            title="Original IntelliEdit C IDE, AST Parsing & Compiler Pipeline"
+            title="IntelliEdit C IDE, AST Parsing & Compiler Pipeline"
           >
             <CodeEditorIcon size={16} />
             <span>IntelliEdit C IDE</span>
-            <span style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.2)' }}>30% Demo</span>
           </button>
         </div>
 
@@ -405,27 +400,13 @@ export default function App() {
           {/* Right Inspection Panel */}
           <div className="right-panel">
             <div className="panel-tabs">
-              <button 
-                className={`tab-btn ${ideTab === 'compiler' ? 'active' : ''}`}
-                onClick={() => setIdeTab('compiler')}
-              >
+              <div className="tab-btn active" style={{ cursor: 'default' }}>
                 <Cpu size={16} />
                 Compiler Processes
-              </button>
-              <button 
-                className={`tab-btn ${ideTab === 'suggestions' ? 'active' : ''}`}
-                onClick={() => setIdeTab('suggestions')}
-              >
-                <Sparkles size={16} />
-                AI Optimizations
-              </button>
+              </div>
             </div>
             <div className="tab-content glass-panel">
-              {ideTab === 'suggestions' ? (
-                <SuggestionsPanel code={ideCode} />
-              ) : (
-                <CompilerProcesses code={ideCode} />
-              )}
+              <CompilerProcesses code={ideCode} />
             </div>
           </div>
         </div>

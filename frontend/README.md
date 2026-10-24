@@ -1,15 +1,36 @@
-# React + Vite
+# IntelliEdit Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + Vite application for the ML Code Optimizer & CFG Workbench.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+# Install dependencies
+npm install
 
-## React Compiler
+# Start the development server
+npm run dev
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The app will be available at **http://localhost:5173**.
+
+> **Important:** The backend must be running on **http://localhost:8000** before using the app. See the [root README](../README.md) for backend setup instructions.
+
+## Key Dependencies
+
+- **[@monaco-editor/react](https://www.npmjs.com/package/@monaco-editor/react)** — Monaco Diff Editor for side-by-side code comparison
+- **[mermaid](https://www.npmjs.com/package/mermaid)** — Control Flow Graph rendering from backend-generated Mermaid markup
+- **[framer-motion](https://www.npmjs.com/package/framer-motion)** — UI animations
+- **[lucide-react](https://www.npmjs.com/package/lucide-react)** — Icons
+
+## Available Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start Vite dev server with HMR |
+| `npm run build` | Build production bundle |
+| `npm run preview` | Preview production build locally |
+| `npm run lint` | Run Oxlint |
 
 ## Expanding the Oxlint configuration
 
