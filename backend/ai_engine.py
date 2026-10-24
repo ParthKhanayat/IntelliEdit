@@ -1,12 +1,15 @@
 import os
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # We would configure the API key here once the user provides it in a .env file
 # api_key = os.environ.get("GEMINI_API_KEY")
-# if api_key:
+# if api_key and genai:
 #     genai.configure(api_key=api_key)
 
 async def get_optimizations(code: str):

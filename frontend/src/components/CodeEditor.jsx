@@ -46,8 +46,107 @@ const CodeEditor = ({ code, setCode }) => {
         }
       });
 
+      // Register a Code Action Provider for inline ML-driven optimization hints
+      const codeActionProvider = monaco.languages.registerCodeActionProvider('c', {
+        provideCodeActions: async (model, range) => {
+          const lineContent = model.getLineContent(range.startLineNumber);
+
+          // Try the backend ML model first for a richer prediction
+          try {
+            const response = await axios.post('http://localhost:8000/api/inline-hint', {
+              code: lineContent
+            });
+            const { predicted_passes, suggestion } = response.data;
+
+            if (suggestion) {
+              const passLabel = predicted_passes.length > 0
+                ? predicted_passes.join(', ')
+                : 'Optimization';
+              return {
+                actions: [
+                  {
+                    title: `🔧 ML Hint (${passLabel}): apply suggested optimization`,
+                    diagnostics: [],
+                    kind: 'quickfix',
+                    isPreferred: true,
+                    edit: {
+                      edits: [
+                        {
+                          resource: model.uri,
+                          textEdit: {
+                            range: new monaco.Range(
+                              range.startLineNumber,
+                              1,
+                              range.startLineNumber,
+                              lineContent.length + 1
+                            ),
+                            text: suggestion
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                dispose: () => {}
+              };
+            }
+          } catch (err) {
+            // Backend unavailable – fall through to client-side heuristics
+            console.warn("Inline-hint API unavailable, using client-side fallback:", err.message);
+          }
+
+          // Client-side fallback: quick pattern-match for common optimizations
+          if (lineContent.includes('* 8') || lineContent.includes('* 4') || lineContent.includes('+ 0')) {
+            let suggestedText = lineContent;
+            let diagnosticMessage = '';
+
+            if (lineContent.includes('* 8')) {
+              suggestedText = lineContent.replace(/\*\s*8/, '<< 3');
+              diagnosticMessage = 'Optimize: Replace multiplication by 8 with bitwise shift (Strength Reduction)';
+            } else if (lineContent.includes('* 4')) {
+              suggestedText = lineContent.replace(/\*\s*4/, '<< 2');
+              diagnosticMessage = 'Optimize: Replace multiplication by 4 with bitwise shift (Strength Reduction)';
+            } else if (lineContent.includes('+ 0')) {
+              suggestedText = lineContent.replace(/\+\s*0/, '').replace(/;\s*$/, ';');
+              diagnosticMessage = 'Optimize: Remove redundant addition (Algebraic Simplification)';
+            }
+
+            return {
+              actions: [
+                {
+                  title: diagnosticMessage,
+                  diagnostics: [],
+                  kind: 'quickfix',
+                  isPreferred: true,
+                  edit: {
+                    edits: [
+                      {
+                        resource: model.uri,
+                        textEdit: {
+                          range: new monaco.Range(
+                            range.startLineNumber,
+                            1,
+                            range.startLineNumber,
+                            lineContent.length + 1
+                          ),
+                          text: suggestedText
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              dispose: () => {}
+            };
+          }
+
+          return { actions: [], dispose: () => {} };
+        }
+      });
+
       return () => {
         provider.dispose();
+        codeActionProvider.dispose();
       }
     }
   }, [monaco]);
